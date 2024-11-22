@@ -53,7 +53,7 @@ resource = Resource(attributes={
 })
 
 # Initialize the OTLP exporter
-otlp_exporter = OTLPSpanExporter(endpoint="http://opentelemetry-collector:4317")
+otlp_exporter = OTLPSpanExporter(endpoint=os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://opentelemetry-collector:4317"), insecure=True)
 
 # Wrap the OTLP exporter with the LoggingSpanExporter
 logging_exporter = LoggingSpanExporter(otlp_exporter)
