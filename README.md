@@ -60,7 +60,49 @@ When you run migrations, you'll see:
 ⚠️ Always run migrations after initial deployment or when changing models.``
 
 ## Distributed Tracing
-The application is configured to send traces to Grafana Tempo via the Alloy collector.
+
+### Database Tracing Configuration
+- Uses OpenTelemetry Django and Psycopg2 instrumentations
+- Traces include:
+  - Database connection details
+  - Query performance
+  - Distributed tracing context
+
+### Tracing Packages
+- `opentelemetry-instrumentation-django`
+- `opentelemetry-instrumentation-psycopg2`
+- `opentelemetry-exporter-otlp`
+
+### Tracing Features
+- Comprehensive OpenTelemetry instrumentation
+- Spans for each view method
+- Error tracking and status reporting
+- Detailed attributes:
+  - HTTP methods
+  - Note primary keys
+  - Form validation status
+
+### Traced Operations
+- List notes
+- Create notes
+- Update notes
+- Delete notes
+- View note details
+
+### Tracing Attributes
+- `http.method`: HTTP request method
+- `notes.count`: Number of notes
+- `note.pk`: Primary key of specific notes
+- `form.is_valid`: Form validation status
+### Debugging Tracing
+- Verify OpenTelemetry packages are installed
+- Check OTLP exporter configuration
+- Ensure tracing is enabled in Django settings
+
+## Troubleshooting Tracing
+- Verify OTLP exporter endpoint
+- Check Grafana Alloy configuration
+- Ensure network connectivity between services and tracing backend
 
 ### Tracing Endpoint
 `http://grafana-k8s-monitoring-alloy.grafana.svc.cluster.local:4317`

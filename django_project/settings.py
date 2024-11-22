@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'opentelemetry.instrumentation.django',
     'notes_app',
 ]
 
@@ -77,6 +78,22 @@ TEMPLATES = [
 WSGI_APPLICATION = 'django_project.wsgi.application'
 
 
+# Add to existing settings
+OPENTELEMETRY_ENABLED = True
+
+# Modify OpenTelemetry setup section
+if OPENTELEMETRY_ENABLED:
+    try:
+        from .instrumentation import setup_opentelemetry
+        print("Attempting OpenTelemetry setup")
+        setup_opentelemetry()
+        print("OpenTelemetry setup completed successfully")
+    except ImportError as e:
+        print(f"OpenTelemetry import error: {e}")
+        logging.error(f"OpenTelemetry import failed: {e}")
+    except Exception as e:
+        print(f"OpenTelemetry setup failed: {e}")
+        logging.error(f"OpenTelemetry setup failed: {e}")
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 
@@ -87,7 +104,7 @@ DATABASES = {
         'USER': os.environ.get('DB_USER'),
         'PASSWORD': os.environ.get('DB_PASSWORD'),
         'HOST': os.environ.get('DB_HOST'),
-        'PORT': os.environ.get('DB_PORT'),
+        'PORT': os.environ.get('DB_PORT')
     }
 }
 
@@ -132,3 +149,39 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# Add to settings.py
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'level': 'INFO',
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose'
+        },
+    },
+    'loggers': {
+        'opentelemetry': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'django': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'django.request': {
+            'handlers': ['console'],
+            'level': 'ERROR',
+            'propagate': False,
+        },
+    },
+}
