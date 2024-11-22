@@ -1,0 +1,17 @@
+receivers:
+  postgresql:
+    endpoint: localhost:5432
+    username: django
+    password: "1234"
+
+exporters:
+  otlp:
+    endpoint: "grafana-k8s-monitoring-alloy.grafana.svc.cluster.local:4317"
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    traces:
+      receivers: [postgresql]
+      exporters: [otlp]

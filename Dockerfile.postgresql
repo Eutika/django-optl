@@ -1,0 +1,29 @@
+FROM postgres:13
+
+# Install necessary system dependencies
+RUN apt-get update && \
+    apt-get install -y wget ca-certificates \
+    python3 python3-pip \
+    build-essential libpq-dev python3-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install OpenTelemetry and database dependencies using pip
+RUN pip3 install --break-system-packages \
+    opentelemetry-api \
+    opentelemetry-sdk \
+    opentelemetry-exporter-otlp \
+    opentelemetry-instrumentation-sqlalchemy \
+    opentelemetry-proto \
+    psycopg2-binary
+
+# Add instrumentation script
+COPY postgresql-otel-instrumentation.py /usr/local/bin/postgresql-otel-instrumentation.py
+
+# Add entrypoint script to run instrumentation and postgres
+COPY postgresql-entrypoint.sh /usr/local/bin/postgresql-entrypoint.sh
+RUN chmod +x /usr/local/bin/postgresql-entrypoint.sh \
+    /usr/local/bin/postgresql-otel-instrumentation.py
+
+# Use custom entrypoint
+ENTRYPOINT ["/usr/local/bin/postgresql-entrypoint.sh"]
+CMD ["postgres"]

@@ -1,71 +1,80 @@
 import os
 import logging
+
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExportResult
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.instrumentation.django import DjangoInstrumentor
 from opentelemetry.instrumentation.psycopg2 import Psycopg2Instrumentor
-from opentelemetry.sdk.resources import Resource, SERVICE_NAME, SERVICE_NAMESPACE
-
-# Global flag to prevent multiple instrumentations
-_is_instrumented = False
+from opentelemetry.sdk.resources import Resource, SERVICE_NAME
 
 def setup_opentelemetry():
-    global _is_instrumented
+    # Configure logging for OpenTelemetry setup
+    logger = logging.getLogger(__name__)
     
-    # Check if already instrumented
-    if _is_instrumented:
-        print("OpenTelemetry already instrumented. Skipping.")
-        return
-    
-    print("Starting OpenTelemetry setup")
     try:
-        # Create resources for notes and database services
-        notes_resource = Resource(attributes={
-            SERVICE_NAME: "notes",
-            SERVICE_NAMESPACE: "application",
-            "service.version": "1.0.0",
-            "deployment.environment": "kubernetes"
+        # Check if a tracer provider is already set
+        current_tracer_provider = trace.get_tracer_provider()
+        if isinstance(current_tracer_provider, TracerProvider):
+            logger.warning("Tracer provider already set. Skipping re-initialization.")
+            return
+        
+        # Determine service name from environment
+        service_name = os.environ.get('OTEL_SERVICE_NAME', 'notes-web-service')
+        
+        # Create resource with detailed service information
+        resource = Resource.create({
+            SERVICE_NAME: service_name,
+            "service.version": os.environ.get('SERVICE_VERSION', '1.0.0'),
+            "deployment.environment": os.environ.get('DEPLOYMENT_ENV', 'kubernetes'),
+            "service.namespace": os.environ.get('SERVICE_NAMESPACE', 'notes-app'),
+            "service.instance.id": os.environ.get('HOSTNAME', 'unknown-instance')
         })
         
-        db_resource = Resource(attributes={
-            SERVICE_NAME: "notes-db",
-            SERVICE_NAMESPACE: "database",
-            "service.version": "1.0.0",
-            "deployment.environment": "kubernetes"
-        })
+        # Set up trace provider with resource
+        provider = TracerProvider(resource=resource)
+        trace.set_tracer_provider(provider)
         
-        # Set up trace providers with resources
-        notes_provider = TracerProvider(resource=notes_resource)
-        db_provider = TracerProvider(resource=db_resource)
+        # Create OTLP exporter with robust endpoint configuration
+        otlp_endpoint = os.environ.get(
+            'OTEL_EXPORTER_OTLP_ENDPOINT', 
+            'http://grafana-k8s-monitoring-alloy.grafana.svc.cluster.local:4317'
+        )
         
-        trace.set_tracer_provider(notes_provider)
-        
-        # Create OTLP exporter
         otlp_exporter = OTLPSpanExporter(
-            endpoint=os.environ.get(
-                'OTEL_EXPORTER_OTLP_ENDPOINT', 
-                'http://grafana-k8s-monitoring-alloy.grafana.svc.cluster.local:4317'
-            ),
-            insecure=True
+            endpoint=otlp_endpoint,
+            insecure=os.environ.get('OTEL_EXPORTER_INSECURE', 'true').lower() == 'true'
         )
         
-        # Add batch processors
-        notes_provider.add_span_processor(
-            BatchSpanProcessor(otlp_exporter)
-        )
-        db_provider.add_span_processor(
+        # Add batch processor
+        provider.add_span_processor(
             BatchSpanProcessor(otlp_exporter)
         )
         
-        # Instrument only if not already instrumented
-        if not _is_instrumented:
+        # Instrument Django
+        try:
             DjangoInstrumentor().instrument()
-            Psycopg2Instrumentor().instrument()
-            _is_instrumented = True
+            logger.info(f"Django instrumentation successful for {service_name}")
+        except Exception as django_err:
+            logger.error(f"Django instrumentation failed: {django_err}")
         
-        print("OpenTelemetry setup completed successfully")
-    except Exception as e:
-        print(f"OpenTelemetry setup error: {e}")
+        # Instrument Psycopg2
+        try:
+            Psycopg2Instrumentor().instrument(
+                # Add tags to help identify database operations
+                tags_generator=lambda cursor: {
+                    "db.system": "postgresql",
+                    "db.name": os.environ.get('DB_NAME', 'notes'),
+                    "db.user": os.environ.get('DB_USER', 'django')
+                }
+            )
+            logger.info("Psycopg2 instrumentation successful")
+        except Exception as psycopg_err:
+            logger.error(f"Psycopg2 instrumentation failed: {psycopg_err}")
+        
+        logger.info(f"OpenTelemetry setup completed successfully for {service_name}")
+    
+    except Exception as setup_err:
+        logger.error(f"OpenTelemetry setup failed: {setup_err}")
         raise

@@ -8,9 +8,13 @@ https://docs.djangoproject.com/en/4.2/howto/deployment/asgi/
 """
 
 import os
-
 from django.core.asgi import get_asgi_application
+from opentelemetry.instrumentation.asgi import OpenTelemetryMiddleware
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django_project.settings')
 
+# Get basic ASGI application
 application = get_asgi_application()
+
+# Wrap with OpenTelemetry middleware
+application = OpenTelemetryMiddleware(application)

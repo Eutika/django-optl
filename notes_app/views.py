@@ -10,12 +10,13 @@ tracer = trace.get_tracer(__name__)
 
 def note_list(request):
     with tracer.start_as_current_span("note_list") as span:
+        # Add more context to the span
+        span.set_attribute("http.method", request.method)
+        span.set_attribute("http.route", "note_list")
+        
         with tracer.start_as_current_span("database_query"):
             notes = Note.objects.all()
-        
-        # Add attributes to the span
-        span.set_attribute("http.method", request.method)
-        span.set_attribute("notes.count", len(notes))
+            span.set_attribute("database.query", "SELECT * FROM notes_app_note")
         
         return render(request, 'note_list.html', {'notes': notes})
 
