@@ -4,7 +4,7 @@ metadata:
   name: postgresql
 spec:
   selector:
-    app: notes-db
+    app: postgresql
   ports:
   - port: 5432
     targetPort: 5432
@@ -26,16 +26,16 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: notes-db
+  name: postgresql
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: notes-db
+      app: postgresql
   template:
     metadata:
       labels:
-        app: notes-db
+        app: postgresql
     spec:
       containers:
       - name: postgresql
@@ -55,6 +55,13 @@ spec:
           value: postgresql
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: "http://grafana-k8s-monitoring-alloy.grafana.svc.cluster.local:4317"
+        # Additional debugging environment variables
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        - name: PYTHONPATH
+          value: "/root/.local/lib/python3.x/site-packages"
+        - name: OTEL_TRACE_SAMPLING_RATE
+          value: "1.0"
         volumeMounts:
         - name: initdb
           mountPath: /docker-entrypoint-initdb.d
@@ -122,7 +129,7 @@ spec:
           done
 
           # Rest of your startup script
-          pip install psycopg2
+          pip install --user psycopg2-binary
           python manage.py makemigrations
           python manage.py migrate
           python manage.py runserver 0.0.0.0:8000
@@ -162,3 +169,5 @@ data:
       done
       echo "Multiple databases created"
     fi
+    echo "Generating sample trace"
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" -c "SELECT 1" postgres
