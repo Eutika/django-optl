@@ -2,11 +2,21 @@
 import os
 import logging
 from opentelemetry import trace
+from opentelemetry.trace import SpanProcessor
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.resources import Resource, SERVICE_NAME
-from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+from opentelemetry.instrumentation.psycopg2 import Psycopg2Instrumentor
+
+class DatabaseSpanProcessor(SpanProcessor):
+    def on_start(self, span, parent_context):
+        if "db." in span.name or "sql" in span.name.lower():
+            span.set_attribute("service.name", "postgresql")
+            span.set_attribute("peer.service", "postgresql")
+    
+    def on_end(self, span):
+        pass
 
 def setup_opentelemetry():
     # Configure logging
@@ -40,11 +50,12 @@ def setup_opentelemetry():
         
         # Add batch processor
         provider.add_span_processor(
-            BatchSpanProcessor(otlp_exporter)
+            BatchSpanProcessor(otlp_exporter),
+            DatabaseSpanProcessor()
         )
         
         # Instrument SQLAlchemy (generic SQL instrumentation)
-        SQLAlchemyInstrumentor().instrument(
+        Psycopg2Instrumentor().instrument(
             service_name=resource.attributes[SERVICE_NAME]
         )
         

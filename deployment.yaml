@@ -4,7 +4,7 @@ metadata:
   name: postgresql
 spec:
   selector:
-    app: notes-app
+    app: notes-db
   ports:
   - port: 5432
     targetPort: 5432
@@ -22,20 +22,20 @@ spec:
     targetPort: 8000
   type: ClusterIP
 
----
+--- 
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: notes-app
+  name: notes-db
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: notes-app
+      app: notes-db
   template:
     metadata:
       labels:
-        app: notes-app
+        app: notes-db
     spec:
       containers:
       - name: postgresql
@@ -52,7 +52,7 @@ spec:
         - name: POSTGRES_MULTIPLE_DATABASES
           value: notes,django
         - name: OTEL_SERVICE_NAME
-          value: notes-db-service
+          value: postgresql
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: "http://grafana-k8s-monitoring-alloy.grafana.svc.cluster.local:4317"
         volumeMounts:
@@ -66,7 +66,27 @@ spec:
             - django
           initialDelaySeconds: 15
           periodSeconds: 10
-
+      volumes:
+      - name: initdb
+        configMap:
+          name: postgresql-init
+          defaultMode: 0755
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notes-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: notes-app
+  template:
+    metadata:
+      labels:
+        app: notes-app
+    spec:
+      containers:
       - name: notes-app
         image: dalareo/notes-app:latest
         ports:
@@ -79,7 +99,7 @@ spec:
         - name: DB_PASSWORD
           value: "1234"
         - name: DB_HOST
-          value: localhost
+          value: postgresql
         - name: DB_PORT
           value: "5432"
         - name: DJANGO_SETTINGS_MODULE
@@ -96,32 +116,23 @@ spec:
         args:
         - |
           # Wait for database to be ready
-          sleep 20
+          until pg_isready -h postgresql -p 5432 -U django; do
+            echo "Waiting for PostgreSQL to be ready..."
+            sleep 5
+          done
 
-          # Install dependencies
+          # Rest of your startup script
           pip install psycopg2
-
-          # Run migrations for all apps
           python manage.py makemigrations
           python manage.py migrate
-
-          # Create superuser if not exists
-          python -c "from django.contrib.auth import get_user_model; User = get_user_model(); User.objects.create_superuser('admin', 'admin@example.com', 'adminpass') if not User.objects.filter(username='admin').exists() else None"
-
-          # Start the server
           python manage.py runserver 0.0.0.0:8000
+
         readinessProbe:
           httpGet:
             path: /
             port: 8000
           initialDelaySeconds: 30
           periodSeconds: 10
-
-      volumes:
-      - name: initdb
-        configMap:
-          name: postgresql-init
-          defaultMode: 0755
 
 ---
 apiVersion: v1

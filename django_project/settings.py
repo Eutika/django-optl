@@ -42,7 +42,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'opentelemetry.instrumentation.django',
-    'notes_app',
+    'notes_app.apps.NotesAppConfig',  # Change this line
 ]
 
 MIDDLEWARE = [
@@ -124,16 +124,14 @@ STATICFILES_DIRS = [
 # OpenTelemetry configuration
 OPENTELEMETRY_ENABLED = os.environ.get('OPENTELEMETRY_ENABLED', 'True') == 'True'
 
-if OPENTELEMETRY_ENABLED:
-    try:
-        from .instrumentation import setup_opentelemetry
-        logging.info("Attempting OpenTelemetry setup")
-        setup_opentelemetry()
-        logging.info("OpenTelemetry setup completed successfully")
-    except ImportError as e:
-        logging.error(f"OpenTelemetry import failed: {e}")
-    except Exception as e:
-        logging.error(f"OpenTelemetry setup failed: {e}")
+# OpenTelemetry Settings
+OTEL_SERVICE_NAME = os.environ.get('OTEL_SERVICE_NAME', 'notes-web-service')
+OTEL_EXPORTER_OTLP_ENDPOINT = os.environ.get(
+    'OTEL_EXPORTER_OTLP_ENDPOINT',
+    'http://grafana-k8s-monitoring-alloy.grafana.svc.cluster.local:4317'
+)
+OTEL_PYTHON_DJANGO_INSTRUMENT = True
+OTEL_PYTHON_DJANGO_INSTRUMENT_DATABASES = True
 
 # Database configuration
 DATABASES = {

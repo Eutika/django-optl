@@ -5,4 +5,4 @@ set -e
 python3 /usr/local/bin/postgresql-otel-instrumentation.py &
 
 # Run the original PostgreSQL entrypoint
-docker-entrypoint.sh postgres
+docker-entrypoint.sh "$@"
