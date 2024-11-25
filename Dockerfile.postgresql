@@ -21,31 +21,43 @@ RUN apt-get update && \
 RUN python3 -c "import sys; print('Python executable:', sys.executable)" && \
     python3 -m pip --version
 
-# Install dependencies in stages with verbose output
-RUN python3 -m pip install --break-system-packages --no-cache-dir psycopg2-binary
-RUN python3 -m pip install --break-system-packages --no-cache-dir grpcio
+# Install OpenTelemetry dependencies with comprehensive tracing support
 RUN python3 -m pip install --break-system-packages --no-cache-dir \
+    psycopg2-binary \
+    grpcio \
     opentelemetry-api \
     opentelemetry-sdk \
-    opentelemetry-exporter-otlp-proto-grpc
-
-RUN python3 -m pip install --break-system-packages --no-cache-dir \
+    opentelemetry-exporter-otlp-proto-grpc \
     opentelemetry-instrumentation-sqlalchemy \
-    opentelemetry-instrumentation-psycopg2
+    opentelemetry-instrumentation-psycopg2 \
+    opentelemetry-instrumentation-logging
 
-# Create directory for scripts
-RUN mkdir -p /usr/local/bin
+# Create directory for scripts with correct permissions
+RUN mkdir -p /usr/local/bin && \
+    chmod 755 /usr/local/bin
 
-# Copy instrumentation scripts
-COPY postgresql-tracing.py /usr/local/bin/postgresql-tracing.py
-COPY enhanced-entrypoint.sh /usr/local/bin/enhanced-entrypoint.sh
+# Copy instrumentation scripts with explicit permissions
+COPY --chown=postgres:postgres postgresql-tracing.py /usr/local/bin/postgresql-tracing.py
+COPY --chown=postgres:postgres enhanced-entrypoint.sh /usr/local/bin/enhanced-entrypoint.sh
 
-# Set executable permissions
-RUN chmod +x /usr/local/bin/postgresql-tracing.py \
-    /usr/local/bin/enhanced-entrypoint.sh
+# Set executable permissions explicitly during copy
+RUN chmod 755 /usr/local/bin/postgresql-tracing.py \
+    && chmod 755 /usr/local/bin/enhanced-entrypoint.sh
 
 # Set Python path to ensure module discovery
 ENV PYTHONPATH=/usr/local/lib/python3.11/site-packages:/usr/lib/python3/dist-packages
+
+# Comprehensive OpenTelemetry environment variables
+ENV OTEL_SERVICE_NAME=postgresql-service
+ENV OTEL_EXPORTER_OTLP_ENDPOINT=http://grafana-k8s-monitoring-alloy.grafana.svc.cluster.local:4317
+ENV OTEL_TRACES_EXPORTER=otlp
+ENV OTEL_METRICS_EXPORTER=otlp
+ENV OTEL_LOGS_EXPORTER=otlp
+ENV OTEL_TRACE_SAMPLING_RATE=1.0
+
+# Logging and debugging configuration
+ENV PYTHONWARNINGS=always
+ENV PYTHONDEVMODE=1
 
 # Switch back to postgres user
 USER postgres

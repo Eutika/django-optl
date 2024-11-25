@@ -22,7 +22,7 @@ RUN apt-get update && apt-get install -y \
 # Copy project files
 COPY --chown=django:django . .
 
-# Upgrade pip and install dependencies with OpenTelemetry
+# Upgrade pip and install dependencies with comprehensive OpenTelemetry support
 RUN pip install --upgrade pip && \
     pip install --no-cache-dir \
     psycopg2-binary \
@@ -32,6 +32,7 @@ RUN pip install --upgrade pip && \
     opentelemetry-instrumentation-django \
     opentelemetry-instrumentation-psycopg2 \
     opentelemetry-instrumentation-sqlalchemy \
+    opentelemetry-instrumentation-logging \
     && pip install --no-cache-dir -r requirements.txt \
     && pip install gunicorn
 
@@ -42,23 +43,27 @@ RUN mkdir -p /app/staticfiles && \
 # Expose port
 EXPOSE 8000
 
-# Default environment variables
+# Comprehensive OpenTelemetry environment variables
 ENV DJANGO_SETTINGS_MODULE=django_project.settings
 ENV STATIC_ROOT=/app/staticfiles
-
-# Comprehensive OpenTelemetry environment variables
 ENV OTEL_SERVICE_NAME=notes-web-service
 ENV OTEL_EXPORTER_OTLP_ENDPOINT=http://grafana-k8s-monitoring-alloy.grafana.svc.cluster.local:4317
 ENV OTEL_TRACES_EXPORTER=otlp
 ENV OTEL_METRICS_EXPORTER=otlp
 ENV OTEL_LOGS_EXPORTER=otlp
 ENV OTEL_TRACE_SAMPLING_RATE=1.0
+ENV OTEL_PYTHON_LOG_CORRELATION=true
+ENV OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED=true
 
+# Logging and debugging configuration
+ENV PYTHONWARNINGS=always
+ENV PYTHONDEVMODE=1
 
 # Entrypoint script to set up OpenTelemetry and run Django
 COPY --chown=root:root entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
+# Switch to non-root user
 USER django
 
 # Use entrypoint script

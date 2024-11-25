@@ -36,13 +36,31 @@ spec:
     metadata:
       labels:
         app: postgresql
+      annotations:
+        # Add OpenTelemetry specific annotations
+        instrumentation.opentelemetry.io/inject-python: "true"
     spec:
       containers:
       - name: postgresql
         image: dalareo/notes-db:latest
+        # always pull
+        imagePullPolicy: Always
         ports:
         - containerPort: 5432
         env:
+        # Comprehensive OpenTelemetry Environment Variables
+        - name: OTEL_SERVICE_NAME
+          value: postgresql-service
+        - name: OTEL_RESOURCE_ATTRIBUTES
+          value: "service.name=postgresql-service,service.type=database,db.system=postgresql,db.connection_string=postgresql://django@notes:5432/notes"
+        - name: OTEL_TRACES_EXPORTER
+          value: otlp
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: "http://grafana-k8s-monitoring-alloy.grafana.svc.cluster.local:4317"
+        - name: OTEL_TRACE_SAMPLING_RATE
+          value: "1.0"
+        
+        # Database Configuration
         - name: POSTGRES_DB
           value: notes
         - name: POSTGRES_USER
@@ -51,19 +69,13 @@ spec:
           value: "1234"
         - name: POSTGRES_MULTIPLE_DATABASES
           value: notes,django
-        - name: OTEL_SERVICE_NAME
-          value: postgresql
-        - name: OTEL_TRACES_EXPORTER
-          value: otlp
-        - name: OTEL_EXPORTER_OTLP_ENDPOINT
-          value: "http://grafana-k8s-monitoring-alloy.grafana.svc.cluster.local:4317"
-        # Additional debugging environment variables
+        
+        # Debugging and Logging
         - name: PYTHONUNBUFFERED
           value: "1"
         - name: PYTHONPATH
           value: "/root/.local/lib/python3.x/site-packages"
-        - name: OTEL_TRACE_SAMPLING_RATE
-          value: "1.0"
+        
         volumeMounts:
         - name: initdb
           mountPath: /docker-entrypoint-initdb.d
@@ -80,6 +92,7 @@ spec:
         configMap:
           name: postgresql-init
           defaultMode: 0755
+
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -94,13 +107,19 @@ spec:
     metadata:
       labels:
         app: notes-app
+      annotations:
+        # Add OpenTelemetry specific annotations
+        instrumentation.opentelemetry.io/inject-python: "true"
     spec:
       containers:
       - name: notes-app
         image: dalareo/notes-app:latest
+        #always pull
+        imagePullPolicy: Always
         ports:
         - containerPort: 8000
         env:
+        # Database Connection
         - name: DB_NAME
           value: django
         - name: DB_USER
@@ -111,12 +130,18 @@ spec:
           value: postgresql
         - name: DB_PORT
           value: "5432"
+        
+        # Django and OpenTelemetry Configuration
         - name: DJANGO_SETTINGS_MODULE
           value: django_project.settings
         - name: ALLOWED_HOSTS
           value: "*"
         - name: DEBUG
           value: "True"
+        
+        # OpenTelemetry Environment Variables
+        - name: OTEL_SERVICE_NAME
+          value: notes-web-service
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: "http://grafana-k8s-monitoring-alloy.grafana.svc.cluster.local:4317"
         - name: OTEL_TRACES_SAMPLER
@@ -125,6 +150,7 @@ spec:
           value: "otlp"
         - name: OTEL_PYTHON_LOG_CORRELATION
           value: "true"
+        
         command: ["/bin/sh", "-c"]
         args:
         - |

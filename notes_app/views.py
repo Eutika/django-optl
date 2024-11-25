@@ -1,3 +1,4 @@
+import logging
 from django.shortcuts import render, redirect, get_object_or_404
 from .models import Note
 from .forms import NoteForm
@@ -7,14 +8,33 @@ from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 from opentelemetry.propagate import inject
 
+logger = logging.getLogger(__name__)
+
 # Create a tracer
 tracer = trace.get_tracer(__name__)
+
+def create_db_span_attributes(operation, table=None, statement=None, row_count=None):
+    return {
+        "db.system": "postgresql",
+        "db.name": "notes",
+        "db.user": "django",
+        "db.operation": operation.upper(),
+        "db.sql.table": table,
+        "db.statement": statement,
+        "db.row_count": row_count,
+        "server.address": os.environ.get('DB_HOST', 'postgresql'),
+        "server.port": os.environ.get('DB_PORT', '5432'),
+        "network.transport": "tcp",
+        "service.name": "postgresql",
+        "peer.service": "notes-web-service"
+    }
 
 def note_list(request):
     with tracer.start_as_current_span("note_list") as span:
         # Prepare context for downstream services
         context = {}
         inject(context)
+        
         # Add HTTP request details to span
         span.set_attribute("http.method", request.method)
         span.set_attribute("http.route", "/notes")
@@ -22,17 +42,37 @@ def note_list(request):
         try:
             # Create a nested span for database query with explicit PostgreSQL service attribution
             with tracer.start_as_current_span("db.query") as db_span:
-                db_span.set_attribute("db.system", "postgresql")
-                db_span.set_attribute("service.name", "postgresql")
-                db_span.set_attribute("peer.service", "notes-web-service")
-                
-                # Perform database query
+                # Set attributes immediately within the span context
+                db_span.set_attributes({
+                    # PostgreSQL Semantic Conventions
+                    "db.system": "postgresql",
+                    "db.name": "notes",  # Hardcoded or from settings
+                    "db.user": "django",  # From database settings
+                    "db.operation": "SELECT",
+                    "db.sql.table": "notes_app_note",
+                    
+                    # Network and Service Attributes
+                    "server.address": os.environ.get('DB_HOST', 'postgresql'),
+                    "server.port": os.environ.get('DB_PORT', '5432'),
+                    "network.transport": "tcp",
+                    
+                    # Detailed Attributes
+                    "db.statement": "SELECT * FROM notes_app_note",
+                    
+                    # Service Attribution
+                    "service.name": "postgresql",
+                    "peer.service": "notes-web-service"
+                })
+
+                # Fetch notes
                 notes = Note.objects.all()
                 
-                # Add query details to span
-                db_span.set_attribute("db.operation", "select")
-                db_span.set_attribute("db.query", "SELECT * FROM notes_app_note")
+                # Add row count after query
                 db_span.set_attribute("db.row_count", len(notes))
+
+            current_span = trace.get_current_span()
+            logger.info(f"Trace ID: {current_span.get_span_context().trace_id}")
+            logger.info(f"Span ID: {current_span.get_span_context().span_id}")
             
             return render(request, 'note_list.html', {'notes': notes})
         
