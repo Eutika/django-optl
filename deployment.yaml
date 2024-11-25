@@ -53,6 +53,8 @@ spec:
           value: notes,django
         - name: OTEL_SERVICE_NAME
           value: postgresql
+        - name: OTEL_TRACES_EXPORTER
+          value: otlp
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: "http://grafana-k8s-monitoring-alloy.grafana.svc.cluster.local:4317"
         # Additional debugging environment variables
@@ -115,10 +117,14 @@ spec:
           value: "*"
         - name: DEBUG
           value: "True"
-        - name: OTEL_SERVICE_NAME
-          value: notes-web-service
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: "http://grafana-k8s-monitoring-alloy.grafana.svc.cluster.local:4317"
+        - name: OTEL_TRACES_SAMPLER
+          value: "always_on"
+        - name: OTEL_TRACES_EXPORTER
+          value: "otlp"
+        - name: OTEL_PYTHON_LOG_CORRELATION
+          value: "true"
         command: ["/bin/sh", "-c"]
         args:
         - |

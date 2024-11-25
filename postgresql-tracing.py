@@ -2,8 +2,17 @@
 import os
 import sys
 import logging
+import time
+import socket
+import psycopg2
+from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.semconv.resource import ResourceAttributes
+from opentelemetry.trace import Status, StatusCode
 
-# Comprehensive logging
 logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -14,80 +23,128 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Log system and environment details
-logger.info(f"Python Executable: {sys.executable}")
-logger.info(f"Python Path: {sys.path}")
-logger.info(f"Environment Variables:")
-for key, value in os.environ.items():
-    logger.info(f"{key}: {value}")
+def setup_postgresql_tracing():
+    resource = Resource.create({
+        ResourceAttributes.SERVICE_NAME: "postgresql",
+        ResourceAttributes.SERVICE_VERSION: "1.0.0",
+        ResourceAttributes.DEPLOYMENT_ENVIRONMENT: "kubernetes"
+    })
 
-# Comprehensive module import check
-def check_module_availability():
-    modules_to_check = [
-        'opentelemetry',
-        'opentelemetry.api',
-        'opentelemetry.sdk',
-        'opentelemetry.exporter.otlp.proto.grpc.trace_exporter'
-    ]
-    
-    for module in modules_to_check:
+    provider = TracerProvider(resource=resource)
+    trace.set_tracer_provider(provider)
+
+    otlp_exporter = OTLPSpanExporter(
+        endpoint=os.environ.get(
+            'OTEL_EXPORTER_OTLP_ENDPOINT', 
+            'http://grafana-k8s-monitoring-alloy.grafana.svc.cluster.local:4317'
+        ),
+        insecure=True
+    )
+
+    provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
+    return trace.get_tracer(__name__, tracer_provider=provider)
+
+def validate_database_connection(tracer, conn_params):
+    with tracer.start_as_current_span("db.connection_validation") as span:
         try:
-            __import__(module)
-            logger.info(f"Module {module} is available")
-        except ImportError as e:
-            logger.error(f"Failed to import {module}: {e}")
+            span.set_attribute("db.system", "postgresql")
+            span.set_attribute("db.host", conn_params.get('host', 'unknown'))
+            span.set_attribute("db.port", str(conn_params.get('port', '5432')))
+            span.set_attribute("service.name", "postgresql")
 
-# Run module availability check
-check_module_availability()
+            with psycopg2.connect(**conn_params) as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("SELECT version()")
+                    db_version = cursor.fetchone()[0]
+                
+                span.set_attribute("db.version", db_version)
+                span.set_attribute("db.user", conn_params.get('user', 'unknown'))
+                
+                logger.info(f"Database connection successful. Version: {db_version}")
+            
+            span.set_status(Status(StatusCode.OK))
+        
+        except Exception as conn_error:
+            span.record_exception(conn_error)
+            span.set_status(Status(StatusCode.ERROR, str(conn_error)))
+            logger.error(f"Database connection validation failed: {conn_error}")
+            raise
 
-# Full OpenTelemetry import and tracing
-try:
-    from opentelemetry import trace
-    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-    from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import BatchSpanProcessor
-    from opentelemetry.sdk.resources import Resource, SERVICE_NAME
+def generate_comprehensive_database_traces(tracer):
+    conn_params = {
+        'dbname': os.environ.get('POSTGRES_DB', 'postgres'),
+        'user': os.environ.get('POSTGRES_USER', 'postgres'),
+        'password': os.environ.get('POSTGRES_PASSWORD', ''),
+        'host': os.environ.get('DB_HOST', 'localhost'),
+        'port': os.environ.get('DB_PORT', '5432')
+    }
 
-    def setup_comprehensive_tracing():
-        try:
-            # Create resource with service name
-            resource = Resource.create({
-                SERVICE_NAME: os.environ.get('OTEL_SERVICE_NAME', 'postgresql')
-            })
+    with tracer.start_as_current_span("postgresql.diagnostic") as root_span:
+        root_span.set_attribute("service.name", "postgresql")
+        root_span.set_attribute("db.system", "postgresql")
 
-            # Setup trace provider
-            trace_provider = TracerProvider(resource=resource)
-            trace.set_tracer_provider(trace_provider)
+        diagnostic_operations = [
+            ("list_databases", "SELECT datname FROM pg_database LIMIT 10"),
+            ("check_extensions", "SELECT * FROM pg_available_extensions LIMIT 10"),
+            ("list_schemas", "SELECT schema_name FROM information_schema.schemata LIMIT 20"),
+        ]
 
-            # Get endpoint from environment
-            otlp_endpoint = os.environ.get(
-                'OTEL_EXPORTER_OTLP_ENDPOINT', 
-                'http://grafana-k8s-monitoring-alloy.grafana.svc.cluster.local:4317'
-            )
+        for op_name, query in diagnostic_operations:
+            with tracer.start_as_current_span(f"postgresql.{op_name}") as span:
+                try:
+                    span.set_attribute("service.name", "postgresql")
+                    span.set_attribute("db.system", "postgresql")
+                    span.set_attribute("db.operation", op_name)
+                    span.set_attribute("db.statement", query)
 
-            # Create OTLP exporter
-            otlp_exporter = OTLPSpanExporter(
-                endpoint=otlp_endpoint,
-                insecure=True
-            )
+                    with psycopg2.connect(**conn_params) as conn:
+                        with conn.cursor() as cursor:
+                            cursor.execute(query)
+                            results = cursor.fetchall()
+                            
+                            span.set_attribute("db.result_count", len(results))
+                            span.set_status(Status(StatusCode.OK))
+                except Exception as e:
+                    span.record_exception(e)
+                    span.set_status(Status(StatusCode.ERROR, str(e)))
+                    logger.error(f"Diagnostic operation {op_name} failed: {e}")
 
-            # Add batch span processor
-            trace_provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
+def main():
+    # Set up tracing
+    tracer = setup_postgresql_tracing()
 
-            # Create a tracer and generate a startup span
-            tracer = trace.get_tracer(__name__)
-            with tracer.start_as_current_span("postgresql-startup"):
-                logger.info("PostgreSQL tracing initialized successfully")
-                print("PostgreSQL tracing initialized")
+    # Connection parameters for validation
+    conn_params = {
+        'dbname': os.environ.get('POSTGRES_DB', 'postgres'),
+        'user': os.environ.get('POSTGRES_USER', 'postgres'),
+        'password': os.environ.get('POSTGRES_PASSWORD', ''),
+        'host': os.environ.get('DB_HOST', 'localhost'),
+        'port': os.environ.get('DB_PORT', '5432')
+    }
 
-        except Exception as e:
-            logger.error(f"Comprehensive tracing setup failed: {e}", exc_info=True)
-            print(f"Comprehensive tracing setup failed: {e}")
-            sys.exit(1)
+    # Validate database connection
+    validate_database_connection(tracer, conn_params)
 
-    # Execute tracing setup
-    setup_comprehensive_tracing()
+    # Periodic trace generation
+    def trace_generator():
+        while True:
+            try:
+                generate_comprehensive_database_traces(tracer)
+            except Exception as e:
+                logger.error(f"Trace generation error: {e}")
+            time.sleep(60)  # Generate traces every minute
 
-except Exception as global_e:
-    logger.error(f"Global import or setup error: {global_e}", exc_info=True)
-    sys.exit(1)
+    try:
+        import threading
+        trace_thread = threading.Thread(target=trace_generator, daemon=True)
+        trace_thread.start()
+        trace_thread.join()  # Keep the script running
+    except Exception as thread_err:
+        logger.error(f"Trace generation thread failed: {thread_err}")
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as global_err:
+        logger.error(f"Script execution failed: {global_err}")
+        sys.exit(1)

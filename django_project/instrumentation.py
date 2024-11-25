@@ -48,11 +48,7 @@ def trace_database_operation(operation_name):
     return decorator
 
 class DatabaseTracer:
-    """
-    Wrapper class for database operations with OpenTelemetry tracing
-    """
     def __init__(self, connection_params=None):
-        # Use environment variables or default connection parameters
         self.connection_params = connection_params or {
             'dbname': os.environ.get('DB_NAME', 'django'),
             'user': os.environ.get('DB_USER', 'django'),
@@ -63,16 +59,17 @@ class DatabaseTracer:
     
     @contextmanager
     def get_connection(self):
-        """
-        Context manager for database connections with tracing
-        """
         connection = None
         try:
-            with tracer.start_as_current_span("db.connection"):
+            with tracer.start_as_current_span("db.connection") as span:
+                # Explicit service attribution
+                span.set_attribute("service.name", "postgresql")
+                span.set_attribute("peer.service", "postgresql")
+                span.set_attribute("db.system", "postgresql")
+                
                 connection = psycopg2.connect(**self.connection_params)
                 yield connection
         except Exception as e:
-            # Trace connection errors
             active_span = trace.get_current_span()
             active_span.record_exception(e)
             active_span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
@@ -153,36 +150,29 @@ class DatabaseSpanProcessor(SpanProcessor):
         pass
 
 def setup_opentelemetry():
-    """
-    Set up OpenTelemetry tracing for the application
-    """
-    # Configure logging for OpenTelemetry setup
     logger = logging.getLogger(__name__)
     
     try:
-        # Check if a tracer provider is already set
+        # More robust tracer provider check
         current_tracer_provider = trace.get_tracer_provider()
-        if isinstance(current_tracer_provider, TracerProvider):
-            logger.warning("Tracer provider already set. Skipping re-initialization.")
-            return
-        
-        # Determine service name from environment
-        service_name = os.environ.get('OTEL_SERVICE_NAME', 'notes-web-service')
-        
-        # Create resource with detailed service information
-        resource = Resource.create({
-            SERVICE_NAME: service_name,
-            "service.version": os.environ.get('SERVICE_VERSION', '1.0.0'),
-            "deployment.environment": os.environ.get('DEPLOYMENT_ENV', 'kubernetes'),
-            "service.namespace": os.environ.get('SERVICE_NAMESPACE', 'notes-app'),
-            "service.instance.id": os.environ.get('HOSTNAME', 'unknown-instance')
-        })
-        
-        # Set up trace provider with resource
-        provider = TracerProvider(resource=resource)
-        trace.set_tracer_provider(provider)
-        
-        # Create OTLP exporter with robust endpoint configuration
+        if not isinstance(current_tracer_provider, TracerProvider):
+            # Create resource with service name
+            resource = Resource.create({
+                SERVICE_NAME: os.environ.get('OTEL_SERVICE_NAME', 'postgresql'),
+                "service.version": os.environ.get('SERVICE_VERSION', '1.0.0'),
+                "deployment.environment": os.environ.get('DEPLOYMENT_ENV', 'kubernetes'),
+                "service.namespace": os.environ.get('SERVICE_NAMESPACE', 'notes-app'),
+                "service.instance.id": os.environ.get('HOSTNAME', 'unknown-instance')
+            })
+            
+            # Setup trace provider with resource
+            provider = TracerProvider(resource=resource)
+            trace.set_tracer_provider(provider)
+        else:
+            provider = current_tracer_provider
+            logger.warning("Using existing tracer provider")
+
+        # More robust OTLP exporter configuration
         otlp_endpoint = os.environ.get(
             'OTEL_EXPORTER_OTLP_ENDPOINT', 
             'http://grafana-k8s-monitoring-alloy.grafana.svc.cluster.local:4317'
@@ -194,32 +184,56 @@ def setup_opentelemetry():
         )
         
         # Add batch processor
-        provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
+        batch_processor = BatchSpanProcessor(otlp_exporter)
+        provider.add_span_processor(batch_processor)
         
         # Add database span processor
         provider.add_span_processor(DatabaseSpanProcessor())
         
-        # Instrument Psycopg2 first
+        # Enhanced Psycopg2 Instrumentation
         try:
             Psycopg2Instrumentor().instrument(
-                tags_generator=lambda cursor: get_db_attributes()
+                tracer_provider=provider,
+                tags_generator=lambda cursor: {
+                    "db.system": "postgresql",
+                    "service.name": "postgresql",
+                    "peer.service": "notes-web-service",
+                    "net.peer.name": os.environ.get('DB_HOST', 'localhost'),
+                    "net.peer.port": os.environ.get('DB_PORT', '5432')
+                }
             )
             logger.info("Psycopg2 instrumentation successful")
         except Exception as psycopg_err:
             logger.error(f"Psycopg2 instrumentation failed: {psycopg_err}")
         
-        # Instrument Django last
+        # Enhanced Django Instrumentation
         try:
             DjangoInstrumentor().instrument(
+                # More comprehensive instrumentation options
                 is_sql_commentator_enabled=True,
+                tracer_provider=provider,
+                get_tracer_provider=provider,
+                commenter_options={
+                    'comment_prefix': 'django-otel',
+                    'db_statement_key': 'db.statement'
+                },
+                # Ensure link between web and database services
                 trace_parent_span_header_name='traceparent'
             )
-            logger.info(f"Django instrumentation successful for {service_name}")
+            logger.info("Django instrumentation successful")
         except Exception as django_err:
             logger.error(f"Django instrumentation failed: {django_err}")
         
-        logger.info(f"OpenTelemetry setup completed successfully for {service_name}")
+        logger.info("OpenTelemetry setup completed successfully")
     
     except Exception as setup_err:
         logger.error(f"OpenTelemetry setup failed: {setup_err}")
         raise
+
+def link_service_spans(parent_span, child_span):
+    """
+    Explicitly link spans between services
+    """
+    if parent_span and child_span:
+        child_span.set_attribute("service.parent", parent_span.get_span_context().trace_id)
+        parent_span.set_attribute("service.child", child_span.get_span_context().trace_id)
