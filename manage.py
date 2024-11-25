@@ -2,12 +2,21 @@
 """Django's command-line utility for administrative tasks."""
 import os
 import sys
+import logging
 from opentelemetry.instrumentation.django import DjangoInstrumentor
 
 
 
 def main():
     """Run administrative tasks."""
+    # Set up logging early
+    logging.basicConfig(
+        level=logging.INFO,
+        format='[%(asctime)s] %(levelname)s [%(name)s:%(lineno)s] %(message)s',
+        handlers=[
+            logging.StreamHandler(sys.stdout)
+        ]
+    )
     os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django_project.settings')
     try:
         from django.core.management import execute_from_command_line
@@ -18,8 +27,6 @@ def main():
             "forget to activate a virtual environment?"
         ) from exc
     execute_from_command_line(sys.argv)
-    DjangoInstrumentor().instrument()
-
 
 if __name__ == '__main__':
     main()

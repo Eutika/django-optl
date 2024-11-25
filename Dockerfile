@@ -17,24 +17,33 @@ RUN apt-get update && apt-get install -y \
     postgresql-client \
     libpq-dev \
     gcc \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy project files
-COPY --chown=django:django . .
+# Copy requirements first to leverage docker cache
+COPY --chown=django:django requirements.txt .
 
-# Upgrade pip and install dependencies with comprehensive OpenTelemetry support
+# Upgrade pip and install dependencies
 RUN pip install --upgrade pip && \
     pip install --no-cache-dir \
+    wheel \
+    setuptools && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Install additional OpenTelemetry and project dependencies
+RUN pip install --no-cache-dir \
     psycopg2-binary \
     opentelemetry-api \
     opentelemetry-sdk \
-    opentelemetry-exporter-otlp-proto-grpc \
+    opentelemetry-exporter-otlp-proto-http \
     opentelemetry-instrumentation-django \
     opentelemetry-instrumentation-psycopg2 \
     opentelemetry-instrumentation-sqlalchemy \
     opentelemetry-instrumentation-logging \
-    && pip install --no-cache-dir -r requirements.txt \
-    && pip install gunicorn
+    gunicorn
+
+# Copy project files
+COPY --chown=django:django . .
 
 # Create static files directory with correct permissions
 RUN mkdir -p /app/staticfiles && \
@@ -49,8 +58,6 @@ ENV STATIC_ROOT=/app/staticfiles
 ENV OTEL_SERVICE_NAME=notes-web-service
 ENV OTEL_EXPORTER_OTLP_ENDPOINT=http://grafana-k8s-monitoring-alloy.grafana.svc.cluster.local:4317
 ENV OTEL_TRACES_EXPORTER=otlp
-ENV OTEL_METRICS_EXPORTER=otlp
-ENV OTEL_LOGS_EXPORTER=otlp
 ENV OTEL_TRACE_SAMPLING_RATE=1.0
 ENV OTEL_PYTHON_LOG_CORRELATION=true
 ENV OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED=true
@@ -58,6 +65,9 @@ ENV OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED=true
 # Logging and debugging configuration
 ENV PYTHONWARNINGS=always
 ENV PYTHONDEVMODE=1
+ENV PYTHONUNBUFFERED=1
+ENV DJANGO_LOG_LEVEL=INFO
+ENV DJANGO_LOG_TO_FILE=false
 
 # Entrypoint script to set up OpenTelemetry and run Django
 COPY --chown=root:root entrypoint.sh /app/entrypoint.sh

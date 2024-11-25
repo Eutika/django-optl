@@ -134,6 +134,8 @@ spec:
         # Django and OpenTelemetry Configuration
         - name: DJANGO_SETTINGS_MODULE
           value: django_project.settings
+        - name: DJANGO_LOG_LEVEL
+          value: INFO
         - name: ALLOWED_HOSTS
           value: "*"
         - name: DEBUG
